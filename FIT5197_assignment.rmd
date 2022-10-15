@@ -886,6 +886,8 @@ library(leaps)
 library(MASS)
 library(psych)
 library(dplyr)
+library(e1071)
+library(randomForest)
 ```
 
 ## Data Preparation
@@ -919,17 +921,13 @@ plot(df_train$joyjoy)
 As we can see, it seems that the data comes from two distributions:
 
 ```{r}
-# create two datasets
+#
 df_train1 <- df_train[1:40000,]
 df_train2 <- df_train[40001:50000,]
-
-plot(df_train1$joyjoy)
-plot(df_train2$joyjoy)
 ```
 
 ```{r}
 # add testing dataset
-
 #boxplot two
 b <- min(c(df_train1$joyjoy,df_train2$joyjoy)) # Set the minimum for the breakpoints
 e <- max(c(df_train1$joyjoy,df_train2$joyjoy)) # Set the maximum for the breakpoints
@@ -943,74 +941,174 @@ plot(hgA, col="red") # Plot 1st histogram using a transparent color
 plot(hgB, col="blue", add = TRUE) # Add 2nd histogram using different color
 ```
 
+Given the data has two distinctly different distributions, we will need
+to complet
+
+### SVM Model 1
+
 ```{r}
-# split the groups into 2
-# split predicted variable
-split <-  sample.split(df_train1$joyjoy,SplitRatio = 0.7)
-training_set1 <-  subset(df_train1,split==TRUE)
-testing_set1 <-  subset(df_train1,split==FALSE)
-testing_set1X <-  subset(df_train,split==FALSE,select=-joyjoy)
-#tips
-# run a t-test to prove it
-# Google XgBoost
-# hyperparameter tuning
-#flexmix
+#data load
+df_train <- read.csv("Regression_train.csv")
+# create two datasets
+df_train1 <- df_train[1:40000,]
+
 ```
 
-### SVM Model
+```{r}
+#train test split
+split <-  sample.split(df_train1$joyjoy,SplitRatio = 0.9)
+training_set1 <-  subset(df_train1,split==TRUE)
+testing_set1 <-  subset(df_train1,split==FALSE)
+testing_set1X <-  subset(testing_set1,select=-joyjoy)
+```
 
 ```{r}
-library(e1071)
+#training the model
 regressor <- svm(joyjoy ~.,data=training_set1,
                  type="eps-regression")
 ```
 
 ```{r}
 # test with train data
-pred_svm <- predict(regressor, testing_set1X)
-### MSPE of new model
-# mean((testing_set1$joyjoy - pred_svm)^2)
-
-
+pred_svm2 <- predict(regressor, testing_set1X)
 ```
 
-Write it out:
-
-#to fix: change - in variable names to .
+Note that my previous model scored 2.76 RMSE
 
 ```{r}
+#RMSE
+mean((testing_set1$joyjoy - pred_svm2)^2)
+```
+
+```{r}
+# save results
 # Load in the test data.
 test <- read.csv("Regression_test.csv")
 # If you are using any packages that perform the prediction differently, please change this line of code accordingly.
-#
 pred.label <- predict(regressor, test)
 # put these predicted labels in a csv file that you can use to commit to the Kaggle Leaderboard
 write.csv(data.frame("RowIndex" = seq(1, length(pred.label)), "Prediction" = pred.label),  
           "RegressionPredictLabel.csv", row.names = F)
 ```
 
+### SVM Model 2
+
 ```{r}
-
+#data load
+df_train <- read.csv("Regression_train.csv")
+# create two datasets
+df_train1 <- df_train[1:40000,]
+#train test split
+training_set1 <-  df_train1
 ```
 
-::: {.cell .code execution_count="0"}
-``` r
-# Build your final model here, use additional coding blocks if you need to
-fin.mod <- NULL
+```{r}
+#training the model
+regressor <- svm(joyjoy ~.,data=training_set1,
+                 type="eps-regression")
 ```
-:::
 
-::: {.cell .code execution_count="0"}
-``` r
+```{r}
+# save results
 # Load in the test data.
 test <- read.csv("Regression_test.csv")
 # If you are using any packages that perform the prediction differently, please change this line of code accordingly.
-pred.label <- predict(fin.mod, test)
+pred.label <- predict(regressor, test)
 # put these predicted labels in a csv file that you can use to commit to the Kaggle Leaderboard
 write.csv(data.frame("RowIndex" = seq(1, length(pred.label)), "Prediction" = pred.label),  
           "RegressionPredictLabel.csv", row.names = F)
 ```
-:::
+
+### Neural Net
+
+```{r warning=FALSE}
+library(keras)
+library(mlbench)
+library(dplyr)
+library(magrittr)
+library(neuralnet)
+library(tensorflow)
+```
+
+```{r}
+#data load
+data <- read.csv("Regression_train.csv")
+# create two datasets
+data <- data[1:40000,]
+data <- as.matrix(data)
+```
+
+#### Data Partition
+
+```{r}
+set.seed(123)
+ind <- sample(2, nrow(data), replace = T, prob = c(.99, .01))
+training <- data[ind==1,1:30]
+test <- data[ind==2, 1:30]
+trainingtarget <- data[ind==1, 31]
+testtarget <- data[ind==2, 31]
+str(trainingtarget)
+str(testtarget)
+```
+
+#### Create Model
+
+```{r message=FALSE}
+# install_tensorflow()
+#create model
+# model <- keras_model_sequential()
+# model %>% 
+#         layer_dense(units = 5, activation='relu',
+#                     input_shape = c(30)) %>% 
+#         layer_dense(units=1)
+
+#fine tune model (best so far)
+model <- keras_model_sequential()
+model %>%
+        layer_dense(units = 80, activation='relu',
+                    input_shape = c(30)) %>%
+        layer_dense(units = 40, activation='relu') %>%
+        layer_dense(units = 20, activation='relu') %>%
+        layer_dense(units = 20, activation='relu') %>%
+        layer_dense(units = 10, activation='relu') %>%
+        layer_dense(units=1)
+
+#compile model
+model %>% compile(loss = 'mse',
+                  optimizer = 'rmsprop',
+                  metrics = 'mae')
+#fit model
+mymodel <- model %>% fit(training,
+                         trainingtarget,
+                         epochs=300,
+                         batch_size=32,
+                         validation_split=0.2)
+```
+
+```{r}
+## evaluate
+model %>% evaluate(test, testtarget)
+```
+
+```{r}
+# save results
+# Load in the test data.
+test <- read.csv("Regression_test.csv")
+test <- as.matrix(test)
+# If you are using any packages that perform the prediction differently, please change this line of code accordingly.
+pred.label <- model %>% predict(test)
+# put these predicted labels in a csv file that you can use to commit to the Kaggle Leaderboard
+write.csv(data.frame("RowIndex" = seq(1, length(pred.label)), "Prediction" = pred.label),  
+          "RegressionPredictLabel.csv", row.names = F)
+```
+
+```{r}
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
 
 ::: {.cell .code execution_count="0"}
 ``` r
